@@ -70,12 +70,21 @@ static float smallAngleCosZ = 0;
 static float magneticDeclination = 0.0f;       // calculated at startup from config
 
 static imuRuntimeConfig_t imuRuntimeConfig;
-static pidProfile_t *pidProfile;
 
 STATIC_UNIT_TESTED float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f;    // quaternion of sensor frame relative to earth frame
 static float rMat[3][3];
 
 attitudeEulerAngles_t attitude = { { 0, 0, 0 } };     // absolute angle inclination in multiple of 0.1 degree    180 deg = 1800
+
+PG_REGISTER_WITH_RESET_TEMPLATE(imuConfig_t, imuConfig, PG_IMU_CONFIG, 0);
+
+PG_RESET_TEMPLATE(imuConfig_t, imuConfig,
+    .dcm_kp = 2500,                // 1.0 * 10000
+    .dcm_ki = 0,                   // 0.003 * 10000
+    .small_angle = 25,
+    .accDeadband = {.xy = 40, .z= 40},
+    .acc_unarmedcal = 1
+);
 
 STATIC_UNIT_TESTED void imuComputeRotationMatrix(void)
 {
@@ -116,18 +125,13 @@ static float calculateThrottleAngleScale(uint16_t throttle_correction_angle)
     return (1800.0f / M_PIf) * (900.0f / throttle_correction_angle);
 }
 
-void imuConfigure(
-    imuConfig_t *imuConfig,
-    pidProfile_t *initialPidProfile,
-    uint16_t throttle_correction_angle
-)
+void imuConfigure(uint16_t throttle_correction_angle)
 {
-    imuRuntimeConfig.dcm_kp = imuConfig->dcm_kp / 10000.0f;
-    imuRuntimeConfig.dcm_ki = imuConfig->dcm_ki / 10000.0f;
-    imuRuntimeConfig.acc_unarmedcal = imuConfig->acc_unarmedcal;
-    imuRuntimeConfig.small_angle = imuConfig->small_angle;
+    imuRuntimeConfig.dcm_kp = imuConfig()->dcm_kp / 10000.0f;
+    imuRuntimeConfig.dcm_ki = imuConfig()->dcm_ki / 10000.0f;
+    imuRuntimeConfig.acc_unarmedcal = imuConfig()->acc_unarmedcal;
+    imuRuntimeConfig.small_angle = imuConfig()->small_angle;
 
-    pidProfile = initialPidProfile;
     fc_acc = calculateAccZLowPassFilterRCTimeConstant(5.0f); // Set to fix value
     throttleAngleScale = calculateThrottleAngleScale(throttle_correction_angle);
 }

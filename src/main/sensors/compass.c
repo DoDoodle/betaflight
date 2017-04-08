@@ -36,9 +36,10 @@
 #include "fc/config.h"
 #include "fc/runtime_config.h"
 
-#include "sensors/sensors.h"
 #include "sensors/boardalignment.h"
 #include "sensors/compass.h"
+#include "sensors/gyro.h"
+#include "sensors/sensors.h"
 
 #ifdef USE_HARDWARE_REVISION_DETECTION
 #include "hardware_revision.h"
@@ -46,6 +47,22 @@
 
 magDev_t magDev;
 mag_t mag;                   // mag access functions
+
+#ifdef MAG_INT_EXTI
+#define COMPASS_INTERRUPT_TAG   IO_TAG(MAG_INT_EXTI)
+#else
+#define COMPASS_INTERRUPT_TAG   IO_TAG_NONE
+#endif
+
+PG_REGISTER_WITH_RESET_TEMPLATE(compassConfig_t, compassConfig, PG_COMPASS_CONFIG, 0);
+
+PG_RESET_TEMPLATE(compassConfig_t, compassConfig,
+    .mag_align = ALIGN_DEFAULT,
+    // xxx_hardware: 0:default/autodetect, 1: disable
+    .mag_hardware = 1,
+    .mag_declination = 0,
+    .interruptTag = COMPASS_INTERRUPT_TAG
+);
 
 #ifdef MAG
 
@@ -55,33 +72,6 @@ static uint8_t magInit = 0;
 bool compassDetect(magDev_t *dev, magSensor_e magHardwareToUse)
 {
     magSensor_e magHardware;
-
-#ifdef USE_MAG_HMC5883
-    const hmc5883Config_t *hmc5883Config = 0;
-
-#ifdef NAZE // TODO remove this target specific define
-    static const hmc5883Config_t nazeHmc5883Config_v1_v4 = {
-            .intTag = IO_TAG(PB12) /* perhaps disabled? */
-    };
-    static const hmc5883Config_t nazeHmc5883Config_v5 = {
-            .intTag = IO_TAG(MAG_INT_EXTI)
-    };
-    if (hardwareRevision < NAZE32_REV5) {
-        hmc5883Config = &nazeHmc5883Config_v1_v4;
-    } else {
-        hmc5883Config = &nazeHmc5883Config_v5;
-    }
-#endif
-
-#ifdef MAG_INT_EXTI
-    static const hmc5883Config_t extiHmc5883Config = {
-        .intTag = IO_TAG(MAG_INT_EXTI)
-    };
-
-    hmc5883Config = &extiHmc5883Config;
-#endif
-
-#endif
 
 retry:
 
@@ -93,7 +83,7 @@ retry:
 
     case MAG_HMC5883:
 #ifdef USE_MAG_HMC5883
-        if (hmc5883lDetect(dev, hmc5883Config)) {
+        if (hmc5883lDetect(dev, compassConfig()->interruptTag)) {
 #ifdef MAG_HMC5883_ALIGN
             dev->magAlign = MAG_HMC5883_ALIGN;
 #endif
@@ -152,9 +142,12 @@ bool compassInit(void)
     // initialize and calibration. turn on led during mag calibration (calibration routine blinks it)
     // calculate magnetic declination
     mag.magneticDeclination = 0.0f; // TODO investigate if this is actually needed if there is no mag sensor or if the value stored in the config should be used.
+    // copy over SPI bus settings for AK8963 compass
+    magDev.bus = *gyroSensorBus();
     if (!compassDetect(&magDev, compassConfig()->mag_hardware)) {
         return false;
     }
+
     const int16_t deg = compassConfig()->mag_declination / 100;
     const int16_t min = compassConfig()->mag_declination % 100;
     mag.magneticDeclination = (deg + ((float)min * (1.0f / 60.0f))) * 10; // heading is in 0.1deg units
